@@ -1,0 +1,33 @@
+plugins {
+    id 'java-library'
+    id 'kotlin'
+    id 'maven-publish'
+}
+
+java {
+    sourceCompatibility = JavaVersion.VERSION_1_8
+    targetCompatibility = JavaVersion.VERSION_1_8
+}
+
+dependencies {
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:1.4.10"
+    implementation gradleApi()
+    implementation 'com.android.tools.build:gradle:3.4.1'
+    implementation 'org.ow2.asm:asm:7.1'
+    implementation 'org.ow2.asm:asm-util:7.1'
+    implementation 'org.ow2.asm:asm-commons:7.1'
+}
+
+afterEvaluate {
+    publishing{
+        publications{
+            maven(MavenPublication){
+                from components.java    //发布java组件
+
+                groupId = 'com.stefan.transform'
+                artifactId = 'bytelego'
+                version = '0.1.11'
+            }
+        }
+    }
+}

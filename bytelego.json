@@ -1,0 +1,26 @@
+[
+  {
+    "className":["com.byte_stefan.bytelego.MainActivity","1"],
+    "methodName":["onCreate"],
+    "insertCodeConfig":{
+      "className": "com.byte_stefan.bytelego.ByteLegoInsertCode",
+      "onMethodBefore": "onMethodEnter",
+      "onMethodAfter": "onMethodExit"
+    }
+  },
+  {
+    "className": ["com.byte_stefan.bytelego.MainActivity"],
+    "methodName": ["onDestroy"],
+    "insertCodeConfig": {
+      "className": "com.byte_stefan.bytelego.ByteLegoInsertCode",
+      "onMethodAfter": "onMethodExit"
+    }
+  },
+  {
+    "methodName": ["onClick"],
+    "insertCodeConfig": {
+      "className": "com.byte_stefan.bytelego.ByteLegoInsertCode",
+      "onMethodBefore": "onMethodEnter"
+    }
+  }
+]
