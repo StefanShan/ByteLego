@@ -62,38 +62,23 @@ object ConfigManager {
         return configData
     }
 
-    private val matchConfigArray = mutableListOf<ConfigDataItem>()
+    private val matchConfigMap= mutableMapOf<Int,ConfigDataItem>()
+    private var mLastClassName: String? = null
 
     /**
      * 判断是否命中规则（类名）
      *
      * @return Pair<匹配状态[MatchState], 命中的规则>
      */
-    fun containsClass(cls: String): Pair<MatchState, List<ConfigDataItem>> {
+    fun containsClass(cls: String): List<ConfigDataItem> {
         val realClass = cls.replace("/", ".")
-        matchConfigArray.clear()
-        var classNotConfigTag = true
-        configData?.forEach { configItem ->
-            if (configItem.className.isNullOrEmpty()) {
-                return@forEach
-            }
-            classNotConfigTag = false
-            if (configItem.className.contains(realClass)) {
-                matchConfigArray.add(configItem)
-            }
-
-        }
-        return when {
-            classNotConfigTag -> {
-                Pair(MatchState.NOT_CONFIG, matchConfigArray)
-            }
-            matchConfigArray.isEmpty() -> {
-                Pair(MatchState.NOT_MATCHED, matchConfigArray)
-            }
-            else -> {
-                Pair(MatchState.MATCHED, matchConfigArray)
+        matchConfigMap.clear()
+        configData?.forEachIndexed { index, configItem ->
+            if (configItem.className == null || configItem.className.contains(realClass)){
+                matchConfigMap[index] = configItem
             }
         }
+        return matchConfigMap.values.toList()
     }
 
     /**
@@ -101,77 +86,48 @@ object ConfigManager {
      *
      * @return Pair<匹配状态[MatchState], 命中的规则>
      */
-    fun containsClassAnnotation(classAnnotation: String): Pair<MatchState, List<ConfigDataItem>> {
+    fun containsClassAnnotation(classAnnotation: String): List<ConfigDataItem> {
         val realAnnotation = classAnnotation.replace("/", ".")
-        var notClassAnnotationConfigTag = true
-        configData?.forEach { configItem ->
-            if (configItem.classAnnotation.isNullOrBlank()) {
-                return@forEach
-            }
-            notClassAnnotationConfigTag = false
-            if (configItem.classAnnotation == realAnnotation) {
-                matchConfigArray.add(configItem)
-            }
-        }
-        return when {
-            notClassAnnotationConfigTag -> {
-                Pair(MatchState.NOT_CONFIG, matchConfigArray)
-            }
-            matchConfigArray.isEmpty() -> {
-                Pair(MatchState.NOT_MATCHED, matchConfigArray)
-            }
-            else -> {
-                Pair(MatchState.MATCHED, matchConfigArray)
-            }
-        }
-    }
-
-    fun containsClassOrAnnotation(
-        className: String,
-        classAnnotation: String
-    ): List<ConfigDataItem> {
-        matchConfigArray.clear()
-        val realClass = className.replace("/", ".").also {
-            if (it.contains("$")) {
-                it.substring(0, it.indexOf("$"))
-            }
-        }
-        val realAnnotation = classAnnotation.replace("/", ".")
-        configData?.forEach { configItem ->
-            if ((configItem.className == null && configItem.classAnnotation == null)
-                || configItem.className?.contains(realClass) == true
-                || configItem.classAnnotation == realAnnotation
+        configData?.forEachIndexed { index, configItem ->
+            if ((configItem.classAnnotation == null || configItem.classAnnotation == realAnnotation)
+                && !matchConfigMap.contains(index)
             ) {
-                matchConfigArray.add(configItem)
+                matchConfigMap[index] = configItem
             }
         }
-        return matchConfigArray
+        return matchConfigMap.values.toList()
     }
 
     /**
      * 判断命中的规则中是否配置方法规则，如果未配置则认定为无效命中规则，将其移除
      */
-    fun isEmptyForMatchMethodConfig(): Boolean {
-        for (index in matchConfigArray.indices) {
-            val configItem = matchConfigArray[index]
+    fun isEmptyForMatchMethodConfig(currentClassName: String): Boolean {
+        if (currentClassName == mLastClassName){
+            mLastClassName = currentClassName
+            return false
+        }
+        for (index in matchConfigMap.keys) {
+            val configItem = matchConfigMap[index]!!
             if (configItem.methodAnnotation.isNullOrBlank() && configItem.methodName.isNullOrEmpty()) {
-                matchConfigArray.remove(configItem)
+                matchConfigMap.remove(index)
             }
         }
-        return matchConfigArray.isEmpty()
+        return matchConfigMap.isEmpty()
     }
+
+    private val hitConfigMap = mutableMapOf<Int, ConfigDataItem>()
 
     /**
      * 判断是否命中规则（方法名）
      */
-    fun matchedMethod(methodName: String): List<Pair<Int, ConfigDataItem>> {
-        val matchIndexArray = mutableListOf<Pair<Int, ConfigDataItem>>()
-        matchConfigArray.forEachIndexed { index, configItem ->
-            if (configItem.methodName?.contains(methodName) == true) {
-                matchIndexArray.add(Pair(index, configItem))
+    fun matchedMethod(methodName: String): Map<Int, ConfigDataItem> {
+        hitConfigMap.clear()
+        matchConfigMap.forEach { (index, configItem) ->
+            if (configItem.methodName == null || configItem.methodName.contains(methodName)) {
+                hitConfigMap[index] = configItem
             }
         }
-        return matchIndexArray
+        return hitConfigMap
     }
 
     /**
@@ -179,40 +135,13 @@ object ConfigManager {
      *
      * @return 匹配状态[MatchState]
      */
-    fun matchMethodAnnotation(methodAnnotation: String): List<Pair<Int, ConfigDataItem>> {
-        val matchIndexArray = mutableListOf<Pair<Int, ConfigDataItem>>()
-        matchConfigArray.forEachIndexed { index, configItem ->
-            val realMethodAnnotation = "L${configItem.methodAnnotation}".replace(".","/")
-            if (realMethodAnnotation == methodAnnotation) {
-                matchIndexArray.add(Pair(index, configItem))
-            }
-        }
-        return matchIndexArray
-    }
-
-    /**
-     * 判断是否命中规则（方法名or方法注解）
-     *
-     * @return 匹配状态[MatchState]
-     */
-    fun matchMethodOrAnnotation(
-        methodName: String,
-        methodAnnotation: String
-    ): List<Pair<Int, ConfigDataItem>> {
-        val matchIndexArray = mutableListOf<Pair<Int, ConfigDataItem>>()
-        matchConfigArray.forEachIndexed { index, configItem ->
+    fun matchMethodAnnotation(methodAnnotation: String): MutableMap<Int, ConfigDataItem> {
+        matchConfigMap.forEach { (index, configItem) ->
             val realMethodAnnotation = "L${configItem.methodAnnotation};".replace(".", "/")
-            if (realMethodAnnotation == methodAnnotation || configItem.methodName?.contains(
-                    methodName
-                ) == true
-            ) {
-                matchIndexArray.add(Pair(index, configItem))
+            if (realMethodAnnotation == methodAnnotation && !hitConfigMap.contains(index)) {
+                hitConfigMap[index] = configItem
             }
         }
-        return matchIndexArray
-    }
-
-    fun getMatchConfigByIndex(index: Int): ConfigDataItem {
-        return matchConfigArray[index]
+        return hitConfigMap
     }
 }
