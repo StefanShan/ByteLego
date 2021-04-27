@@ -11,11 +11,18 @@ java {
 
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib:1.4.10"
+
+    //gradle
     implementation gradleApi()
     implementation 'com.android.tools.build:gradle:3.4.1'
+
+    //asm7.1
     implementation 'org.ow2.asm:asm:7.1'
     implementation 'org.ow2.asm:asm-util:7.1'
     implementation 'org.ow2.asm:asm-commons:7.1'
+
+    //yaml解析
+    implementation "org.yaml:snakeyaml:1.27"
 }
 
 afterEvaluate {
@@ -26,7 +33,7 @@ afterEvaluate {
 
                 groupId = 'com.stefan.transform'
                 artifactId = 'bytelego'
-                version = '0.1.13'
+                version = '0.1.14'
             }
         }
     }

@@ -1,0 +1,42 @@
+# 配置规则集合
+# 注意：yaml 文件根据缩进解析层级关系，配置规则时注意缩进！！！
+# rules:
+  # 规则1
+  # -
+    # 配置类注解规则
+    # classAnnotation: "com.example.annotation.CustomClassAnnotation"
+
+    # 配置类规则集合
+    # className:
+    #  - "com.example.classname.MainActivity"
+    #  - "com.example.classname.Main2Activity"
+
+    # 配置方法注解规则
+    # methodAnnotation: "com.example.annotation.CustomMethodAnnotation"
+
+    # 配置方法规则集合
+    # methodName:
+    #  - "onCreate"
+    #  - "onClick"
+
+    # 配置插入代码
+    # insertCodeConfig:
+
+      # 配置插入代码的处理类
+      # className: "com.byte_stefan.bytelego.ByteLegoInsertCode"
+
+      # 指定命中规则的方法在调用前执行处理类的方法
+      # onMethodBefore: "onMethodEnter"
+
+      # 指定命中规则的方法在调用后执行处理类的方法
+      # onMethodAfter: "onMethodExit"
+
+
+
+ rules:
+  -
+    methodName:
+      - "onClick"
+    insertCodeConfig:
+      className: "com.byte_stefan.bytelego.ByteLegoInsertCode"
+      onMethodBefore: "onMethodEnter"

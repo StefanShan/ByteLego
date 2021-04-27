@@ -133,12 +133,12 @@ class LegoClassVisitor(visitor: ClassVisitor) : ClassVisitor(Opcodes.ASM7, visit
     ) {
         println("类名 = $name")
         currentClassName = name
-        hitConfigList = ConfigManager.containsClass(name)
+        hitConfigList = ConfigManager.filterClassConfig(name)
         super.visit(version, access, name, signature, superName, interfaces)
     }
 
     override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
-        hitConfigList = ConfigManager.containsClassAnnotation(descriptor)
+        hitConfigList = ConfigManager.filterClassAnnotationConfig(descriptor)
         return super.visitAnnotation(descriptor, visible)
     }
 
@@ -168,28 +168,28 @@ class LegoMethodVisitor(
     name: String
 ) : AdviceAdapter(api, methodVisitor, access, name, descriptor) {
 
-    private var hitConfigMap : Map<Int, ConfigDataItem> = ConfigManager.matchedMethod(name)
+    private var hitConfigMap: Map<Int, ConfigDataItem> = ConfigManager.matchedMethod(name)
 
     override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
         hitConfigMap = ConfigManager.matchMethodAnnotation(descriptor)
         return super.visitAnnotation(descriptor, visible)
     }
 
-    private fun assertCheck(insertCodeConfig: InsertCodeConfig?, ext: ()->Boolean): Boolean{
+    private fun assertCheck(insertCodeConfig: InsertCodeConfig?, ext: () -> Boolean): Boolean {
         return insertCodeConfig == null || insertCodeConfig.className.isNullOrBlank() || ext()
     }
 
     override fun onMethodEnter() {
         super.onMethodEnter()
-        if (hitConfigMap.isNullOrEmpty()){
+        if (hitConfigMap.isNullOrEmpty()) {
             return
         }
-        for ((index, config) in hitConfigMap){
+        for ((index, config) in hitConfigMap) {
             val insertCodeConfig = config.insertCodeConfig
-            if (assertCheck(insertCodeConfig){ insertCodeConfig?.onMethodBefore.isNullOrBlank() }) {
+            if (assertCheck(insertCodeConfig) { insertCodeConfig?.onMethodBefore.isNullOrBlank() }) {
                 return
             }
-            val realInertClassName = insertCodeConfig?.className?.replace(".","/")
+            val realInertClassName = insertCodeConfig?.className?.replace(".", "/")
             mv.visitIntInsn(SIPUSH, index)
             mv.visitMethodInsn(
                 INVOKESTATIC,
@@ -203,15 +203,15 @@ class LegoMethodVisitor(
 
     override fun onMethodExit(opcode: Int) {
         super.onMethodExit(opcode)
-        if (hitConfigMap.isNullOrEmpty()){
+        if (hitConfigMap.isNullOrEmpty()) {
             return
         }
-        for ((index, config) in hitConfigMap){
+        for ((index, config) in hitConfigMap) {
             val insertCodeConfig = config.insertCodeConfig
-            if (assertCheck(insertCodeConfig){ insertCodeConfig?.onMethodAfter.isNullOrBlank() }) {
+            if (assertCheck(insertCodeConfig) { insertCodeConfig?.onMethodAfter.isNullOrBlank() }) {
                 return
             }
-            val realInertClassName = insertCodeConfig?.className?.replace(".","/")
+            val realInertClassName = insertCodeConfig?.className?.replace(".", "/")
             if (opcode == Opcodes.RETURN || opcode == Opcodes.ATHROW) {
                 mv.visitIntInsn(SIPUSH, index)
                 mv.visitMethodInsn(
