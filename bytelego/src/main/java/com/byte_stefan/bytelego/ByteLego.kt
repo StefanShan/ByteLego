@@ -1,9 +1,6 @@
 package com.byte_stefan.bytelego
 
-import com.android.build.api.transform.Format
-import com.android.build.api.transform.QualifiedContent
-import com.android.build.api.transform.Transform
-import com.android.build.api.transform.TransformInvocation
+import com.android.build.api.transform.*
 import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.LibraryPlugin
 import com.android.build.gradle.internal.pipeline.TransformManager
@@ -35,7 +32,7 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
     override fun getInputTypes(): MutableSet<QualifiedContent.ContentType> =
         TransformManager.CONTENT_JARS
 
-    override fun isIncremental(): Boolean = false
+    override fun isIncremental(): Boolean = true
 
     override fun getScopes(): MutableSet<in QualifiedContent.Scope> = if (Config.isForSDK) {
         TransformManager.PROJECT_ONLY
@@ -52,6 +49,7 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
         }
 
         val outputProvider = transformInvocation.outputProvider
+        val isIncremental = transformInvocation.isIncremental
 
         if (!isIncremental) {
             outputProvider.deleteAll()
@@ -61,60 +59,90 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
 
             //处理jar包中的类
             transformInput.jarInputs.forEach { jarInput ->
-                val outputJarFile = outputProvider.getContentLocation(
-                    jarInput.name,
-                    jarInput.contentTypes,
-                    jarInput.scopes,
-                    Format.JAR
-                )
-                FileUtils.copyFile(jarInput.file, outputJarFile)
+                processJarInput(jarInput, outputProvider)
             }
 
             //处理文件夹中的类
             transformInput.directoryInputs.forEach { dirInput ->
-                val outputDirFile = outputProvider.getContentLocation(
-                    dirInput.name,
-                    dirInput.contentTypes,
-                    dirInput.scopes,
-                    Format.DIRECTORY
-                )
-                val inputDirPath = dirInput.file.absolutePath
-                val outputDirPath = outputDirFile.absolutePath
+                processDirInput(dirInput, outputProvider, isIncremental)
+            }
+        }
+    }
 
-                FileUtils.listFiles(dirInput.file, arrayOf("class"), true).forEach { inputFile ->
-                    //准备输出文件
-                    val outputFilePath = inputFile.absolutePath.replace(inputDirPath, outputDirPath)
-                    val outputFile = File(outputFilePath)
-                    FileUtils.touch(outputFile)
-
-                    //处理class文件，除了R文件生产的相关文件
-                    if (inputFile.exists()
-                        && inputFile.name.endsWith(".class")
-                        && !inputFile.name.startsWith("R.class")
-                        && !inputFile.name.startsWith("R$")
-                    ) {
-
-                        val inputStream = FileInputStream(inputFile)
-                        val outputStream = FileOutputStream(outputFile)
-
-                        //ASM处理class文件
-                        val classReader = ClassReader(inputStream)
-                        val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
-                        classReader.accept(
-                            LegoClassVisitor(classWriter),
-                            ClassReader.EXPAND_FRAMES
-                        )
-                        outputStream.write(classWriter.toByteArray())
-
-                        inputStream.close()
-                        outputStream.close()
-
-                    } else {
-                        FileUtils.copyFile(inputFile, outputFile)
+    private fun processDirInput(
+        dirInput: DirectoryInput,
+        outputProvider: TransformOutputProvider,
+        isIncremental: Boolean
+    ) {
+        val outputDirFile = outputProvider.getContentLocation(
+            dirInput.name,
+            dirInput.contentTypes,
+            dirInput.scopes,
+            Format.DIRECTORY
+        )
+        val inputDirPath = dirInput.file.absolutePath
+        val outputDirPath = outputDirFile.absolutePath
+        if (isIncremental) {
+            dirInput.changedFiles.forEach { (file, status) ->
+                println("修改的文件信息，pathc = ${file.absolutePath} & status = ${status.name}")
+                val outputFilePath = file.absolutePath.replace(inputDirPath, outputDirPath)
+                val outputFile = File(outputFilePath)
+                when (status) {
+                    Status.REMOVED -> FileUtils.forceDeleteOnExit(outputFile)
+                    Status.ADDED, Status.CHANGED -> {
+                        FileUtils.touch(outputFile)
+                        transformInputFile(file, outputFile)
                     }
                 }
             }
+        } else {
+            FileUtils.listFiles(dirInput.file, arrayOf("class"), true).forEach { inputFile ->
+                //准备输出文件
+                val outputFilePath = inputFile.absolutePath.replace(inputDirPath, outputDirPath)
+                val outputFile = File(outputFilePath)
+                FileUtils.touch(outputFile)
+                transformInputFile(inputFile, outputFile)
+            }
         }
+    }
+
+    private fun transformInputFile(inputFile: File, outputFile: File) {
+        //处理class文件，除了R文件生产的相关文件
+        if (inputFile.exists()
+            && inputFile.name.endsWith(".class")
+            && !inputFile.name.startsWith("R.class")
+            && !inputFile.name.startsWith("R$")
+            && inputFile.name != "BuildConfig.class"
+        ) {
+
+            val inputStream = FileInputStream(inputFile)
+            val outputStream = FileOutputStream(outputFile)
+
+            //ASM处理class文件
+            val classReader = ClassReader(inputStream)
+            val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
+            classReader.accept(
+                LegoClassVisitor(classWriter),
+                ClassReader.EXPAND_FRAMES
+            )
+            outputStream.write(classWriter.toByteArray())
+
+            inputStream.close()
+            outputStream.close()
+
+        } else {
+            FileUtils.copyFile(inputFile, outputFile)
+        }
+    }
+
+    private fun processJarInput(jarInput: JarInput, outputProvider: TransformOutputProvider) {
+        val outputJarFile = outputProvider.getContentLocation(
+            jarInput.name,
+            jarInput.contentTypes,
+            jarInput.scopes,
+            Format.JAR
+        )
+        FileUtils.copyFile(jarInput.file, outputJarFile)
     }
 }
 
@@ -131,7 +159,6 @@ class LegoClassVisitor(visitor: ClassVisitor) : ClassVisitor(Opcodes.ASM7, visit
         superName: String?,
         interfaces: Array<out String>?
     ) {
-        println("类名 = $name")
         currentClassName = name
         hitConfigList = ConfigManager.filterClassConfig(name)
         super.visit(version, access, name, signature, superName, interfaces)
@@ -149,12 +176,14 @@ class LegoClassVisitor(visitor: ClassVisitor) : ClassVisitor(Opcodes.ASM7, visit
         signature: String?,
         exceptions: Array<out String>?
     ): MethodVisitor {
-        println("方法名 = $name")
         //如果未配置class规则 or class命中的规则中有配置method规则的集合不为空，直接走LegoMethodVisitor
         //如果class未命中 or class命中了，但未配置method规则, 直接走super
-        if (!hitConfigList.isNullOrEmpty() && !ConfigManager.isEmptyForMatchMethodConfig(currentClassName)) {
+        if (!hitConfigList.isNullOrEmpty() && !ConfigManager.isEmptyForMatchMethodConfig(
+                currentClassName
+            )
+        ) {
             val methodVisitor = cv.visitMethod(access, name, descriptor, signature, exceptions)
-            return LegoMethodVisitor(api, methodVisitor, access, descriptor, name)
+            return LegoMethodVisitor(api, methodVisitor, access, descriptor, currentClassName, name)
         }
         return super.visitMethod(access, name, descriptor, signature, exceptions)
     }
@@ -165,12 +194,23 @@ class LegoMethodVisitor(
     methodVisitor: MethodVisitor,
     access: Int,
     descriptor: String?,
-    name: String
-) : AdviceAdapter(api, methodVisitor, access, name, descriptor) {
+    className: String,
+    private val methodName: String
+) : AdviceAdapter(api, methodVisitor, access, methodName, descriptor) {
 
-    private var hitConfigMap: Map<Int, ConfigDataItem> = ConfigManager.matchedMethod(name)
+    private var hitConfigMap: Map<Int, ConfigDataItem> = ConfigManager.matchedMethod(methodName)
+    private var mCurrentAnnotationName: String? = ""
+
+    private val realClassName: String = className.replace("/", ".").let {
+        if (it.contains("$")) {
+            it.substring(0, className.indexOf("$"))
+        } else {
+            it
+        }
+    }
 
     override fun visitAnnotation(descriptor: String, visible: Boolean): AnnotationVisitor {
+        mCurrentAnnotationName = descriptor
         hitConfigMap = ConfigManager.matchMethodAnnotation(descriptor)
         return super.visitAnnotation(descriptor, visible)
     }
@@ -190,14 +230,45 @@ class LegoMethodVisitor(
                 return
             }
             val realInertClassName = insertCodeConfig?.className?.replace(".", "/")
+            val label0 = Label()
+            val label1 = Label()
+            val label2 = Label()
+            mv.visitTryCatchBlock(label0, label1, label2, "java/lang/Throwable")
+            mv.visitLabel(label0)
+            mv.visitInsn(Opcodes.NOP)
             mv.visitIntInsn(SIPUSH, index)
+            mv.visitLdcInsn(realClassName)
+            mv.visitLdcInsn(methodName)
+            mv.visitLdcInsn(mCurrentAnnotationName)
             mv.visitMethodInsn(
                 INVOKESTATIC,
                 realInertClassName,
                 insertCodeConfig!!.onMethodBefore,
-                "(I)V",
+                "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
                 false
             )
+            mv.visitLabel(label1)
+            val label4 = Label()
+            mv.visitJumpInsn(Opcodes.GOTO, label4)
+            mv.visitLabel(label2)
+            mv.visitFrame(
+                Opcodes.F_SAME1,
+                0,
+                null,
+                1,
+                arrayOf<Any>("java/lang/Throwable")
+            )
+            mv.visitVarInsn(Opcodes.ASTORE, 1)
+            mv.visitVarInsn(Opcodes.ALOAD, 1)
+            mv.visitMethodInsn(
+                Opcodes.INVOKEVIRTUAL,
+                "java/lang/Throwable",
+                "printStackTrace",
+                "()V",
+                false
+            )
+            mv.visitInsn(Opcodes.RETURN)
+            mv.visitLabel(label4)
         }
     }
 
@@ -214,11 +285,14 @@ class LegoMethodVisitor(
             val realInertClassName = insertCodeConfig?.className?.replace(".", "/")
             if (opcode == Opcodes.RETURN || opcode == Opcodes.ATHROW) {
                 mv.visitIntInsn(SIPUSH, index)
+                mv.visitLdcInsn(realClassName)
+                mv.visitLdcInsn(methodName)
+                mv.visitLdcInsn(mCurrentAnnotationName)
                 mv.visitMethodInsn(
                     INVOKESTATIC,
                     realInertClassName,
                     insertCodeConfig!!.onMethodAfter,
-                    "(I)V",
+                    "(ILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)V",
                     false
                 )
             }

@@ -40,3 +40,4 @@
     insertCodeConfig:
       className: "com.byte_stefan.bytelego.ByteLegoInsertCode"
       onMethodBefore: "onMethodEnter"
+      onMethodAfter: "onMethodEnd"
