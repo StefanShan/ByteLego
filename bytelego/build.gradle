@@ -1,7 +1,9 @@
 plugins {
     id 'java-library'
     id 'kotlin'
+    id 'com.github.dcendents.android-maven'
 }
+group='com.stefan.transform'
 
 java {
     sourceCompatibility = JavaVersion.VERSION_1_8
@@ -23,5 +25,3 @@ dependencies {
     //yaml解析
     implementation "org.yaml:snakeyaml:1.27"
 }
-
-//apply from: 'publish_local.gradle'
