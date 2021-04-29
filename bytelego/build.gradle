@@ -1,7 +1,6 @@
 plugins {
     id 'java-library'
     id 'kotlin'
-    id 'maven-publish'
 }
 
 java {
@@ -25,16 +24,4 @@ dependencies {
     implementation "org.yaml:snakeyaml:1.27"
 }
 
-afterEvaluate {
-    publishing{
-        publications{
-            maven(MavenPublication){
-                from components.java    //发布java组件
-
-                groupId = 'com.stefan.transform'
-                artifactId = 'bytelego'
-                version = '0.2.6'
-            }
-        }
-    }
-}
+//apply from: 'publish_local.gradle'

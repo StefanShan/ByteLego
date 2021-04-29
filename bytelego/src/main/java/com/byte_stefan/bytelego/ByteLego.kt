@@ -1,17 +1,21 @@
 package com.byte_stefan.bytelego
 
+import com.android.SdkConstants
 import com.android.build.api.transform.*
 import com.android.build.gradle.BaseExtension
 import com.android.build.gradle.LibraryPlugin
 import com.android.build.gradle.internal.pipeline.TransformManager
+import com.android.ide.common.internal.WaitableExecutor
 import org.apache.commons.io.FileUtils
 import org.gradle.api.Plugin
 import org.gradle.api.Project
 import org.objectweb.asm.*
 import org.objectweb.asm.commons.AdviceAdapter
-import java.io.File
-import java.io.FileInputStream
-import java.io.FileOutputStream
+import java.io.*
+import java.util.jar.JarEntry
+import java.util.jar.JarFile
+import java.util.jar.JarOutputStream
+import java.util.zip.ZipEntry
 
 object Config {
     var isForSDK = false
@@ -50,6 +54,7 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
 
         val outputProvider = transformInvocation.outputProvider
         val isIncremental = transformInvocation.isIncremental
+        val waitableExecutor = WaitableExecutor.useGlobalSharedThreadPool()
 
         if (!isIncremental) {
             outputProvider.deleteAll()
@@ -59,14 +64,19 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
 
             //处理jar包中的类
             transformInput.jarInputs.forEach { jarInput ->
-                processJarInput(jarInput, outputProvider)
+                waitableExecutor.execute {
+                    processJarInput(jarInput, outputProvider, isIncremental)
+                }
             }
 
             //处理文件夹中的类
             transformInput.directoryInputs.forEach { dirInput ->
-                processDirInput(dirInput, outputProvider, isIncremental)
+                waitableExecutor.execute {
+                    processDirInput(dirInput, outputProvider, isIncremental)
+                }
             }
         }
+        waitableExecutor.waitForTasksWithQuickFail<Any>(true)
     }
 
     private fun processDirInput(
@@ -84,7 +94,6 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
         val outputDirPath = outputDirFile.absolutePath
         if (isIncremental) {
             dirInput.changedFiles.forEach { (file, status) ->
-                println("修改的文件信息，pathc = ${file.absolutePath} & status = ${status.name}")
                 val outputFilePath = file.absolutePath.replace(inputDirPath, outputDirPath)
                 val outputFile = File(outputFilePath)
                 when (status) {
@@ -135,20 +144,88 @@ class ByteLegoPlugin : Plugin<Project>, Transform() {
         }
     }
 
-    private fun processJarInput(jarInput: JarInput, outputProvider: TransformOutputProvider) {
+    private fun processJarInput(
+        jarInput: JarInput,
+        outputProvider: TransformOutputProvider,
+        isIncremental: Boolean
+    ) {
         val outputJarFile = outputProvider.getContentLocation(
             jarInput.name,
             jarInput.contentTypes,
             jarInput.scopes,
             Format.JAR
         )
+        if (isIncremental){
+            when(jarInput.status){
+                Status.REMOVED -> FileUtils.forceDeleteOnExit(outputJarFile)
+                Status.ADDED -> transformInputJar(jarInput)
+                Status.CHANGED ->{
+                    FileUtils.forceDeleteOnExit(outputJarFile)
+                    transformInputJar(jarInput)
+                }
+            }
+        }else{
+            transformInputJar(jarInput)
+        }
         FileUtils.copyFile(jarInput.file, outputJarFile)
+    }
+
+    private fun transformInputJar(jarInput: JarInput) {
+        val jarFile = jarInput.file
+        val jarAbsolutePath = jarFile.absolutePath
+        val backUpFilePath = "${jarAbsolutePath.substring(0, jarAbsolutePath.length - 4)}-${System.currentTimeMillis()}${SdkConstants.DOT_JAR}"
+        val backUpFile = File(backUpFilePath)
+        jarFile.renameTo(backUpFile)
+        val backUpJarFile = JarFile(backUpFilePath)
+        val jos = JarOutputStream(FileOutputStream(jarFile))
+        for (jarEntry in backUpJarFile.entries()) {
+            val className = jarEntry.name
+            if (className.endsWith(".class")
+                && !className.contains("R.class")
+                && !className.contains("R$")){
+                val classReader = ClassReader(backUpJarFile.getInputStream(jarEntry))
+                val classWriter = ClassWriter(ClassWriter.COMPUTE_MAXS)
+                classReader.accept(
+                    LegoClassVisitor(classWriter),
+                    ClassReader.EXPAND_FRAMES
+                )
+                addZipEntry(jos, JarEntry(className), ByteArrayInputStream(classWriter.toByteArray()))
+            }else {
+                val inputStream = backUpJarFile.getInputStream(jarEntry)
+                val newZipEntry = ZipEntry(className)
+                addZipEntry(jos, newZipEntry, inputStream)
+            }
+        }
+
+        with(jos) {
+            flush()
+            finish()
+            close()
+        }
+        backUpJarFile.close()
+        backUpFile.delete()
+    }
+
+    private fun addZipEntry(jos: JarOutputStream, zipEntry: ZipEntry, inputStream: InputStream) {
+        jos.putNextEntry(zipEntry)
+        val buffer = ByteArray(16384)
+        var length: Int
+        do {
+            length = inputStream.read(buffer);
+            if (length == -1) {
+                break
+            }
+            jos.write(buffer, 0, length)
+            jos.flush()
+        } while (length != -1);
+        inputStream.close()
+        jos.closeEntry()
     }
 }
 
 class LegoClassVisitor(visitor: ClassVisitor) : ClassVisitor(Opcodes.ASM7, visitor) {
 
-    private var hitConfigList: List<ConfigDataItem>? = null
+    private var hitConfigList: Map<Int, ConfigDataItem>? = null
     private lateinit var currentClassName: String
 
     override fun visit(
@@ -178,10 +255,7 @@ class LegoClassVisitor(visitor: ClassVisitor) : ClassVisitor(Opcodes.ASM7, visit
     ): MethodVisitor {
         //如果未配置class规则 or class命中的规则中有配置method规则的集合不为空，直接走LegoMethodVisitor
         //如果class未命中 or class命中了，但未配置method规则, 直接走super
-        if (!hitConfigList.isNullOrEmpty() && !ConfigManager.isEmptyForMatchMethodConfig(
-                currentClassName
-            )
-        ) {
+        if (!hitConfigList.isNullOrEmpty() && !ConfigManager.isEmptyForMatchMethodConfig(currentClassName)) {
             val methodVisitor = cv.visitMethod(access, name, descriptor, signature, exceptions)
             return LegoMethodVisitor(api, methodVisitor, access, descriptor, currentClassName, name)
         }

@@ -8,6 +8,7 @@ import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.constructor.Constructor
 import java.io.InputStreamReader
 import java.util.*
+import java.util.concurrent.ConcurrentHashMap
 
 class RuleConfig{
     var rules: List<ConfigDataItem> ?= null
@@ -65,8 +66,8 @@ object ConfigManager {
         return configData
     }
 
-    private val matchConfigMap= mutableMapOf<Int,ConfigDataItem>()
-    private val hitConfigMap = mutableMapOf<Int, ConfigDataItem>()
+    private val matchConfigMap= ConcurrentHashMap<Int,ConfigDataItem>()
+    private val hitConfigMap = ConcurrentHashMap<Int, ConfigDataItem>()
     private var mLastClassName: String? = null
 
     /**
@@ -74,7 +75,7 @@ object ConfigManager {
      *
      * @return 命中的规则
      */
-    fun filterClassConfig(cls: String): List<ConfigDataItem> {
+    fun filterClassConfig(cls: String): Map<Int, ConfigDataItem> {
         val realClass = cls.replace("/", ".")
         matchConfigMap.clear()
         configData?.forEachIndexed { index, configItem ->
@@ -82,7 +83,7 @@ object ConfigManager {
                 matchConfigMap[index] = configItem
             }
         }
-        return matchConfigMap.values.toList()
+        return matchConfigMap
     }
 
     /**
@@ -90,16 +91,15 @@ object ConfigManager {
      *
      * @return 命中的规则
      */
-    fun filterClassAnnotationConfig(classAnnotation: String): List<ConfigDataItem> {
+    fun filterClassAnnotationConfig(classAnnotation: String): Map<Int, ConfigDataItem> {
         val realAnnotation = classAnnotation.replace("/", ".")
         configData?.forEachIndexed { index, configItem ->
             if ((configItem.classAnnotation == null || configItem.classAnnotation == realAnnotation)
-                && !matchConfigMap.contains(index)
-            ) {
+                && !matchConfigMap.contains(index)) {
                 matchConfigMap[index] = configItem
             }
         }
-        return matchConfigMap.values.toList()
+        return matchConfigMap
     }
 
     /**
@@ -111,10 +111,12 @@ object ConfigManager {
             mLastClassName = currentClassName
             return false
         }
-        for (index in matchConfigMap.keys) {
-            val configItem = matchConfigMap[index]!!
-            if (configItem.methodAnnotation.isNullOrBlank() && configItem.methodName.isNullOrEmpty()) {
-                matchConfigMap.remove(index)
+        if(matchConfigMap.isNullOrEmpty()){
+            return true
+        }
+        matchConfigMap.forEach { (index, configDataItem) ->
+            if (configDataItem.methodAnnotation?.isBlank() == true && configDataItem.methodName?.isEmpty() == true){
+                matchConfigMap.remove(index, configDataItem)
             }
         }
         return matchConfigMap.isEmpty()
